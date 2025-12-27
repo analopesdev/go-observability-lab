@@ -3,17 +3,20 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/log"
+	otellog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
 // setupOTelSDK inicializa o pipeline do OpenTelemetry.
@@ -81,17 +84,33 @@ func newPropagator() propagation.TextMapPropagator {
 }
 
 func newTracerProvider() (*trace.TracerProvider, error) {
-	traceExporter, err := stdouttrace.New(
-		stdouttrace.WithPrettyPrint())
+	// Exporter para Jaeger via OTLP gRPC
+	otlpExporter, err := otlptracegrpc.New(
+		context.Background(),
+		otlptracegrpc.WithEndpoint("localhost:4317"),
+		otlptracegrpc.WithInsecure(),
+	)
 	if err != nil {
+		log.Printf("❌ Erro ao criar OTLP exporter: %v", err)
 		return nil, err
 	}
 
 	tracerProvider := trace.NewTracerProvider(
-		trace.WithBatcher(traceExporter,
-			// O valor padrão é 5s. Definimos em 1s para propósito de demonstração.
-			trace.WithBatchTimeout(time.Second)),
+		trace.WithBatcher(
+			otlpExporter,
+			trace.WithMaxExportBatchSize(trace.DefaultMaxExportBatchSize),
+			trace.WithBatchTimeout(trace.DefaultScheduleDelay*time.Millisecond),
+			trace.WithMaxExportBatchSize(trace.DefaultMaxExportBatchSize),
+		),
+		trace.WithResource(
+			resource.NewWithAttributes(
+				semconv.SchemaURL,
+				semconv.ServiceNameKey.String("go-observability-lab"),
+			),
+		),
 	)
+
+	log.Println("✅ TracerProvider configurado com sucesso")
 	return tracerProvider, nil
 }
 
@@ -109,14 +128,14 @@ func newMeterProvider() (*metric.MeterProvider, error) {
 	return meterProvider, nil
 }
 
-func newLoggerProvider() (*log.LoggerProvider, error) {
+func newLoggerProvider() (*otellog.LoggerProvider, error) {
 	logExporter, err := stdoutlog.New()
 	if err != nil {
 		return nil, err
 	}
 
-	loggerProvider := log.NewLoggerProvider(
-		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+	loggerProvider := otellog.NewLoggerProvider(
+		otellog.WithProcessor(otellog.NewBatchProcessor(logExporter)),
 	)
 	return loggerProvider, nil
 }
