@@ -40,6 +40,7 @@ func run() error {
 	}
 
 	otelShutdown, err := otelSetup.SetupOTelSDK(ctx, serviceName, otlpEndpoint)
+
 	if err != nil {
 		return err
 	}

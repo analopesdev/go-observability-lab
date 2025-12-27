@@ -1,0 +1,17 @@
+{
+    "dashboard": {
+      "title": "Observability Dashboard",
+      "panels": [
+        {
+          "title": "Services Overview",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "up",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+  }
