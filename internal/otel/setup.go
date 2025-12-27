@@ -1,4 +1,4 @@
-package main
+package otel
 
 import (
 	"context"
@@ -19,15 +19,11 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
-// setupOTelSDK inicializa o pipeline do OpenTelemetry.
-// Caso não retorne um erro, certifique-se de executar o método shutdown para realizar a finalização adequada.
-func setupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
+// SetupOTelSDK inicializa o pipeline do OpenTelemetry para um serviço específico
+func SetupOTelSDK(ctx context.Context, serviceName string, otlpEndpoint string) (func(context.Context) error, error) {
 	var shutdownFuncs []func(context.Context) error
 	var err error
 
-	// shutdown chama as funções de finalização registradas via shutdownFuncs.
-	// Os erros das chamadas são concatenados.
-	// Cada função de finalização registrada será invocada uma única vez.
 	shutdown := func(ctx context.Context) error {
 		var err error
 		for _, fn := range shutdownFuncs {
@@ -37,17 +33,19 @@ func setupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 		return err
 	}
 
-	// handleErr chama a função shutdown para finalizar corretamente e garante que todos os erros serão retornados.
 	handleErr := func(inErr error) {
 		err = errors.Join(inErr, shutdown(ctx))
 	}
 
-	// Inicializa o Propagator.
-	prop := newPropagator()
+	// Inicializa o Propagator
+	prop := propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
 	otel.SetTextMapPropagator(prop)
 
-	// Inicializa o Trace Provider.
-	tracerProvider, err := newTracerProvider()
+	// Inicializa o Trace Provider
+	tracerProvider, err := newTracerProvider(serviceName, otlpEndpoint)
 	if err != nil {
 		handleErr(err)
 		return shutdown, err
@@ -55,7 +53,7 @@ func setupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
 	otel.SetTracerProvider(tracerProvider)
 
-	// Inicializa o Meter Provider.
+	// Inicializa o Meter Provider
 	meterProvider, err := newMeterProvider()
 	if err != nil {
 		handleErr(err)
@@ -64,7 +62,7 @@ func setupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
 
-	// Inicializa o Logger Provider.
+	// Inicializa o Logger Provider
 	loggerProvider, err := newLoggerProvider()
 	if err != nil {
 		handleErr(err)
@@ -73,21 +71,18 @@ func setupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
 	global.SetLoggerProvider(loggerProvider)
 
+	log.Printf("✅ OpenTelemetry configurado para serviço: %s", serviceName)
 	return shutdown, err
 }
 
-func newPropagator() propagation.TextMapPropagator {
-	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
-}
+func newTracerProvider(serviceName, endpoint string) (*trace.TracerProvider, error) {
+	if endpoint == "" {
+		endpoint = "localhost:4317"
+	}
 
-func newTracerProvider() (*trace.TracerProvider, error) {
-	// Exporter para Jaeger via OTLP gRPC
 	otlpExporter, err := otlptracegrpc.New(
 		context.Background(),
-		otlptracegrpc.WithEndpoint("localhost:4317"),
+		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
@@ -96,21 +91,14 @@ func newTracerProvider() (*trace.TracerProvider, error) {
 	}
 
 	tracerProvider := trace.NewTracerProvider(
-		trace.WithBatcher(
-			otlpExporter,
-			trace.WithMaxExportBatchSize(trace.DefaultMaxExportBatchSize),
-			trace.WithBatchTimeout(trace.DefaultScheduleDelay*time.Millisecond),
-			trace.WithMaxExportBatchSize(trace.DefaultMaxExportBatchSize),
-		),
-		trace.WithResource(
-			resource.NewWithAttributes(
-				semconv.SchemaURL,
-				semconv.ServiceNameKey.String("go-observability-lab"),
-			),
-		),
+		trace.WithBatcher(otlpExporter,
+			trace.WithBatchTimeout(time.Second)),
+		trace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String(serviceName),
+		)),
 	)
 
-	log.Println("✅ TracerProvider configurado com sucesso")
 	return tracerProvider, nil
 }
 
@@ -122,7 +110,6 @@ func newMeterProvider() (*metric.MeterProvider, error) {
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			// O valor padrão é 1m. Definimos em 3s para propósito de demonstração.
 			metric.WithInterval(3*time.Second))),
 	)
 	return meterProvider, nil
