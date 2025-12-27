@@ -2,45 +2,11 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     ports:
-      - "16686:16686"
-      - "14268:14268"
-      - "14250:14250"
-      - "4317:4317"
-      - "4318:4318"
-      - "9411:9411"
+      - "16686:16686"  # UI
+      - "14268:14268"  # HTTP (jaeger.thrift)
+      - "14250:14250"  # gRPC (OTLP)
+      - "4317:4317"    # OTLP gRPC (padrão)
+      - "4318:4318"    # OTLP HTTP (padrão)
+      - "9411:9411"    # Zipkin
     environment:
       - COLLECTOR_ZIPKIN_HOST_PORT=0.0.0.0:9411
-
-  app-a:
-    build:
-      context: .
-    ports:
-      - "8080:8080"
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
-      - APP_B_URL=http://app-b:8081
-    depends_on:
-      - jaeger
-      - app-b
-
-  app-b:
-    build:
-      context: .
-    ports:
-      - "8081:8081"
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
-      - APP_C_URL=http://app-c:8082
-    depends_on:
-      - jaeger
-      - app-c
-
-  app-c:
-    build:
-      context: .
-    ports:
-      - "8082:8082"
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
-    depends_on:
-      - jaeger
